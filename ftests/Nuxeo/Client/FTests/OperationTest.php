@@ -68,6 +68,20 @@ class OperationTest extends TestCase {
     self::assertInstanceOf(Blob::class, $blob);
   }
 
+  public function testBlobsGetList() {
+    /** @var Document $doc */
+    $doc = $this->getClient()
+      ->automation('Document.Create')
+      ->input('doc:/')
+      ->params(array(
+        'type' => 'File',
+        'name' => 'Some file',
+        'properties' => 'dc:title=Some file'
+      ))->execute(Document::class);
+
+    self::assertNotNull($doc->getUid());
+  }
+
   public function testDirectories() {
     /** @var DirectoryEntries $continents */
     $continents = $this->getClient()

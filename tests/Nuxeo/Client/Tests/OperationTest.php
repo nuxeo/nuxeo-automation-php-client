@@ -22,6 +22,7 @@ namespace Nuxeo\Client\Tests;
 use Nuxeo\Client\Constants;
 use Nuxeo\Client\Objects\Audit\LogEntry;
 use Nuxeo\Client\Objects\Blob\Blob;
+use Nuxeo\Client\Objects\Blob\Blobs;
 use Nuxeo\Client\Objects\Document;
 use Nuxeo\Client\Objects\Documents;
 use Nuxeo\Client\Objects\Operation;
@@ -133,6 +134,24 @@ class OperationTest extends TestCase {
     self::assertRequestPathMatches($client, 'automation/Blob.Get');
     self::assertEquals(sprintf('{"params":{},"input":"%s"}', self::DOC_PATH), (string) $client->getRequest()->getBody());
     self::assertEquals($blob->getStream()->getContents(), self::DOC_CONTENT);
+  }
+
+  public function testListBlobs() {
+    $boundary = 'my_boundary';
+    $body = file_get_contents($this->getResource('blob.getlist.txt'))
+      . file_get_contents($this->getResource(self::IMG_FS_PATH))
+      . "--$boundary--";
+
+    $client = $this->getClient()
+      ->addResponse($this->createResponse(200, array(
+        'Content-Type' => 'multipart/mixed; boundary="my_boundary"',
+      ), $body));
+
+    $blobs = $client->automation('Blob.GetList')
+      ->input('/default-domain/workspaces/My Workspace/MyFile')
+      ->execute(Blobs::class);
+
+    self::assertCount(1, $blobs);
   }
 
   /**

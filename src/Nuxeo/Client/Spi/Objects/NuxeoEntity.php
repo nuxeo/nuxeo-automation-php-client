@@ -87,6 +87,20 @@ abstract class NuxeoEntity extends AbstractConnectable {
   }
 
   /**
+   * @return string
+   */
+  public function getEntityType() {
+    return $this->entityType;
+  }
+
+  /**
+   * @return string
+   */
+  public function getRepositoryName() {
+    return $this->repositoryName;
+  }
+
+  /**
    * @return self
    *
    * @throws AnnotationException
@@ -106,11 +120,114 @@ abstract class NuxeoEntity extends AbstractConnectable {
   }
 
   /**
-   * @param string $path
-   * @return UriInterface
+   * @return Marshaller\NuxeoConverter
+   * @throws AnnotationException
    */
-  protected function computeRequestUrl($path) {
-    return UriResolver::resolve($this->getNuxeoClient()->getApiUrl(), new Uri($path));
+  public function getConverter() {
+    if (null === $this->converter) {
+      $this->converter = new Marshaller\NuxeoConverter($this->getAnnotationReader());
+      $this->setupDefaultMarshallers();
+    }
+    return $this->converter;
+  }
+
+  /**
+   * @return Reader
+   * @throws AnnotationException
+   */
+  public function getAnnotationReader() {
+    if (null === $this->annotationReader) {
+      $this->annotationReader = new AnnotationReader();
+    }
+    return $this->annotationReader;
+  }
+
+  /**
+   * @return NuxeoClient
+   */
+  public function getNuxeoClient() {
+    return $this->nuxeoClient;
+  }
+
+  /**
+   * @param AbstractMethod $method
+   * @param null $type
+   * @return null
+   * @throws \Nuxeo\Client\Spi\NuxeoClientException
+   * @throws \Nuxeo\Client\Spi\ClassCastException
+   */
+  protected function getResponseNew(AbstractMethod $method, $type = null) {
+    $body = $method->getBody();
+    $files = $method->getFiles();
+
+    try {
+      [, $params] = $this->getCall();
+    } catch (\ReflectionException $e) {
+      throw NuxeoClientException::fromPrevious($e);
+    }
+
+    $request = $this->getRequest($method, $params);
+
+    if (is_array($files)) {
+      foreach ($files as $file) {
+        $request = $request->addRelatedFile($file);
+      }
+    }
+
+    try {
+      if (null !== $body) {
+        if (!is_string($body)) {
+          $body = $this->getConverter()->writeJSON($body);
+        }
+        $request = $request->withBody(stream_for($body));
+      }
+
+      $response = $this->perform($request);
+
+      if ($response->getBody()->getSize() > 0) {
+        if (false === HttpUtils::isContentType($response, Constants::CONTENT_TYPE_JSON)) {
+
+          switch ($type) {
+            case Blobs::class:
+              return Blobs::fromHttpResponse($response);
+            case Blob::class:
+              return Blob::fromHttpResponse($response);
+            default:
+              throw new ClassCastException(sprintf('Cannot cast %s as any of [%s]', implode(', ', [Blobs::class, Blob::class]), $type));
+          }
+        }
+        $body = $this->getConverter()->readJSON((string)$response->getBody(), $type);
+
+        if ($body instanceof self) {
+          $body->reconnectWith($this->nuxeoClient);
+        }
+
+        return $body;
+      }
+    } catch (BadResponseException $e) {
+      $response = $e->getResponse();
+      $responseBody = (string)$response->getBody();
+      if (empty($responseBody)) {
+        throw new NuxeoClientException($response->getReasonPhrase(), $response->getStatusCode());
+      }
+
+      if (!HttpUtils::isContentType($response, Constants::CONTENT_TYPE_JSON)) {
+        throw new NuxeoClientException($responseBody, $response->getStatusCode());
+      }
+
+      try {
+        throw NuxeoClientException::fromPrevious(
+          $this->getConverter()->readJSON($responseBody, NuxeoException::class),
+          $response->getReasonPhrase(),
+          $response->getStatusCode()
+        );
+      } catch (AnnotationException $e) {
+        throw new NuxeoClientException($responseBody, $response->getStatusCode());
+      }
+    } catch (GuzzleException | AnnotationException $e) {
+      throw NuxeoClientException::fromPrevious($e);
+    }
+    return null;
   }
 
   /**
@@ -130,7 +247,7 @@ abstract class NuxeoEntity extends AbstractConnectable {
       return array($parameter->name, $parameter->isDefaultValueAvailable() ? $parameter->getDefaultValue() : null);
     }, $reflectionMethod->getParameters());
 
-    foreach($paramNames as [$name, $default]) {
+    foreach ($paramNames as [$name, $default]) {
       $params[$name] = $paramValues[$paramIndex] ?? $default;
       $paramIndex++;
     }
@@ -141,8 +258,8 @@ abstract class NuxeoEntity extends AbstractConnectable {
   /**
    * @param AbstractMethod $method
    * @param $params
-   * @throws NuxeoClientException
    * @return Request
+   * @throws NuxeoClientException
    */
   protected function getRequest(AbstractMethod $method, $params) {
     try {
@@ -152,87 +269,17 @@ abstract class NuxeoEntity extends AbstractConnectable {
       );
 
       return $request;
-    } catch(\InvalidArgumentException $e) {
+    } catch (\InvalidArgumentException $e) {
       throw NuxeoClientException::fromPrevious($e);
     }
   }
+
   /**
-   * @param AbstractMethod $method
-   * @param null $type
-   * @return null
-   * @throws \Nuxeo\Client\Spi\NuxeoClientException
-   * @throws \Nuxeo\Client\Spi\ClassCastException
+   * @param string $path
+   * @return UriInterface
    */
-  protected function getResponseNew(AbstractMethod $method, $type = null) {
-    $body = $method->getBody();
-    $files = $method->getFiles();
-
-    try {
-      [, $params] = $this->getCall();
-    } catch(\ReflectionException $e) {
-      throw NuxeoClientException::fromPrevious($e);
-    }
-
-    $request = $this->getRequest($method, $params);
-
-    if(is_array($files)) {
-      foreach($files as $file) {
-        $request = $request->addRelatedFile($file);
-      }
-    }
-
-    try {
-      if(null !== $body) {
-        if(!is_string($body)) {
-          $body = $this->getConverter()->writeJSON($body);
-        }
-        $request = $request->withBody(stream_for($body));
-      }
-
-      $response = $this->perform($request);
-
-      if($response->getBody()->getSize() > 0) {
-        if(false === (
-          HttpUtils::isContentType($response, Constants::CONTENT_TYPE_JSON))) {
-
-          if(Blob::class !== $type) {
-            throw new ClassCastException(sprintf('Cannot cast %s as %s', Blob::class, $type));
-          }
-
-          return Blob::fromHttpResponse($response);
-        }
-        $body = $this->getConverter()->readJSON((string)$response->getBody(), $type);
-
-        if($body instanceof self) {
-          $body->reconnectWith($this->nuxeoClient);
-        }
-
-        return $body;
-      }
-    } catch(BadResponseException $e) {
-      $response = $e->getResponse();
-      $responseBody = (string)$response->getBody();
-      if(empty($responseBody)) {
-        throw new NuxeoClientException($response->getReasonPhrase(), $response->getStatusCode());
-      }
-
-      if(!HttpUtils::isContentType($response, Constants::CONTENT_TYPE_JSON)) {
-        throw new NuxeoClientException($responseBody, $response->getStatusCode());
-      }
-
-      try {
-        throw NuxeoClientException::fromPrevious(
-          $this->getConverter()->readJSON($responseBody, NuxeoException::class),
-          $response->getReasonPhrase(),
-          $response->getStatusCode()
-        );
-      } catch(AnnotationException $e) {
-        throw new NuxeoClientException($responseBody, $response->getStatusCode());
-      }
-    } catch(GuzzleException|AnnotationException $e) {
-      throw NuxeoClientException::fromPrevious($e);
-    }
-    return null;
+  protected function computeRequestUrl($path) {
+    return UriResolver::resolve($this->getNuxeoClient()->getApiUrl(), new Uri($path));
   }
 
   /**
@@ -244,50 +291,6 @@ abstract class NuxeoEntity extends AbstractConnectable {
     $this->nuxeoClient = $nuxeoClient;
 
     return $this;
-  }
-
-  /**
-   * @return Marshaller\NuxeoConverter
-   * @throws AnnotationException
-   */
-  public function getConverter() {
-    if(null === $this->converter) {
-      $this->converter = new Marshaller\NuxeoConverter($this->getAnnotationReader());
-      $this->setupDefaultMarshallers();
-    }
-    return $this->converter;
-  }
-
-  /**
-   * @return Reader
-   * @throws AnnotationException
-   */
-  public function getAnnotationReader() {
-    if(null === $this->annotationReader) {
-      $this->annotationReader = new AnnotationReader();
-    }
-    return $this->annotationReader;
-  }
-
-  /**
-   * @return NuxeoClient
-   */
-  public function getNuxeoClient() {
-    return $this->nuxeoClient;
-  }
-
-  /**
-   * @return string
-   */
-  public function getEntityType() {
-    return $this->entityType;
-  }
-
-  /**
-   * @return string
-   */
-  public function getRepositoryName() {
-    return $this->repositoryName;
   }
 
 }

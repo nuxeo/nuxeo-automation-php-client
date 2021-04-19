@@ -17,8 +17,14 @@
 
 namespace Nuxeo\Client\Objects\Blob;
 
+use GuzzleHttp\Psr7\Utils;
 use JMS\Serializer\Annotation as Serializer;
+use Laminas\Mail\Header\ContentDisposition;
+use Laminas\Mail\Header\ContentType;
+use Laminas\Mime\Decode;
+use Nuxeo\Client\Response;
 use Nuxeo\Client\Spi\Objects\NuxeoEntity;
+use Riverline\MultiPartParser\StreamedPart;
 
 
 class Blobs extends NuxeoEntity implements \Countable {
@@ -55,5 +61,32 @@ class Blobs extends NuxeoEntity implements \Countable {
 
   public function count() {
     return count($this->blobs);
+  }
+
+  /**
+   * @param Response $response
+   * @return Blobs
+   */
+  public static function fromHttpResponse($response) {
+    $matches = [];
+    $blobs = [];
+
+    if(preg_match(',multipart/mixed; boundary="([^"]*)",', $response->getHeaderLine('content-type'), $matches)) {
+      [,$boundary] = $matches;
+
+      foreach (Decode::splitMessageStruct($response->getBody()->__toString(), $boundary) as $part) {
+        /** @var ContentDisposition $disposition */
+        $disposition = $part['header']->get('content-disposition');
+
+        /** @var ContentType $mimetype */
+        $mimetype = $part['header']->get('content-type');
+
+        $blobs[] = new Blob($disposition->getParameter('filename'), Utils::streamFor($part['body']), $mimetype->getType());
+      }
+    } else {
+      // raise exception should be multipart
+    }
+
+    return new Blobs($blobs);
   }
 }

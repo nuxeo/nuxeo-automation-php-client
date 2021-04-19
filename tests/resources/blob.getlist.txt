@@ -1,0 +1,5 @@
+--my_boundary
+Content-type: image/png
+Content-Disposition: attachment;
+	filename="nuxeo.png"
+

@@ -23,6 +23,7 @@ use GuzzleHttp\Psr7\Response;
 use GuzzleHttp\Psr7\Uri;
 use GuzzleHttp\Psr7\UriResolver;
 use Nuxeo\Client\Constants;
+use Nuxeo\Client\NuxeoClient;
 use Nuxeo\Client\Tests\Client;
 
 abstract class TestCase extends \PHPUnit\Framework\TestCase {
@@ -65,6 +66,7 @@ abstract class TestCase extends \PHPUnit\Framework\TestCase {
     if(null === $this->client) {
       $this->client = new Client($url, $username, $password);
     }
+//    return new NuxeoClient('http://localhost:9081/nuxeo');
     return $this->client;
   }
 
